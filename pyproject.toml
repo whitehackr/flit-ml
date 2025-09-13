@@ -1,0 +1,74 @@
+[tool.poetry]
+name = "flit-ml"
+version = "0.1.0"
+description = "ML components for the flit ecosystem - predictive models for financial risk assessment"
+authors = ["Kev Waithaka <kev@whitehackr.com>"]
+readme = "README.md"
+packages = [{include = "flit_ml"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.104.0"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+pydantic = "^2.5.0"
+httpx = "^0.25.0"
+pandas = "^2.1.0"
+numpy = "^1.25.0"
+scikit-learn = "^1.3.0"
+xgboost = "^2.0.0"
+asyncio-mqtt = "^0.16.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+black = "^23.9.0"
+ruff = "^0.1.0"
+mypy = "^1.6.0"
+pre-commit = "^3.5.0"
+
+[tool.poetry.scripts]
+flit-ml-api = "flit_ml.api.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
