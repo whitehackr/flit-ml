@@ -34,6 +34,7 @@ black = "^23.9.0"
 ruff = "^0.1.0"
 mypy = "^1.6.0"
 pre-commit = "^3.5.0"
+ipykernel = "^6.30.1"
 
 [tool.poetry.scripts]
 flit-ml-api = "flit_ml.api.main:main"
