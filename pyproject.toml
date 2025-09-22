@@ -25,6 +25,8 @@ jupyter = "^1.0.0"
 matplotlib = "^3.7.0"
 seaborn = "^0.12.0"
 plotly = "^5.17.0"
+ipykernel = "^6.30.1"
+db-dtypes = "^1.4.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
@@ -34,6 +36,7 @@ black = "^23.9.0"
 ruff = "^0.1.0"
 mypy = "^1.6.0"
 pre-commit = "^3.5.0"
+ipykernel = "^6.30.1"
 
 [tool.poetry.scripts]
 flit-ml-api = "flit_ml.api.main:main"
