@@ -1,0 +1,174 @@
+{
+  "models": {
+    "ridge": {
+      "auc": 0.6154857784857622,
+      "parameters": {
+        "alpha": 1000.0,
+        "class_weight": null,
+        "copy_X": true,
+        "fit_intercept": true,
+        "max_iter": null,
+        "positive": false,
+        "random_state": 42,
+        "solver": "auto",
+        "tol": 0.0001
+      },
+      "discrimination_ratio": 0.9
+    },
+    "logistic": {
+      "auc": 0.6154699427914706,
+      "parameters": {
+        "C": 0.1,
+        "class_weight": null,
+        "dual": false,
+        "fit_intercept": true,
+        "intercept_scaling": 1,
+        "l1_ratio": null,
+        "max_iter": 1000,
+        "multi_class": "deprecated",
+        "n_jobs": null,
+        "penalty": "l1",
+        "random_state": 42,
+        "solver": "saga",
+        "tol": 0.001,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "discrimination_ratio": 0.9
+    },
+    "elastic": {
+      "auc": 0.6154702458669596,
+      "parameters": {
+        "C": 0.1,
+        "class_weight": null,
+        "dual": false,
+        "fit_intercept": true,
+        "intercept_scaling": 1,
+        "l1_ratio": 0.9,
+        "max_iter": 1000,
+        "multi_class": "deprecated",
+        "n_jobs": null,
+        "penalty": "elasticnet",
+        "random_state": 42,
+        "solver": "saga",
+        "tol": 0.001,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "discrimination_ratio": 0.9
+    },
+    "ensemble": {
+      "type": "VotingClassifier",
+      "voting": "soft",
+      "estimators": [
+        "ridge",
+        "logistic",
+        "elastic"
+      ]
+    }
+  },
+  "shared_artifacts": {
+    "feature_names": [
+      "amount",
+      "customer_tenure_days",
+      "device_is_trusted",
+      "risk_score",
+      "installment_count",
+      "payment_credit_limit",
+      "price_comparison_time",
+      "week_of_month",
+      "is_weekend",
+      "is_month_end",
+      "is_holiday_season",
+      "is_business_hours",
+      "is_late_night",
+      "customer_credit_score_range_encoded",
+      "customer_age_bracket_encoded",
+      "customer_income_bracket_encoded",
+      "customer_verification_level_encoded",
+      "product_risk_category_encoded",
+      "risk_level_encoded",
+      "device_type_mobile",
+      "device_type_tablet",
+      "payment_provider_afterpay",
+      "payment_provider_klarna",
+      "payment_provider_sezzle",
+      "product_category_clothing",
+      "product_category_electronics",
+      "product_category_home",
+      "product_category_sports",
+      "purchase_context_normal",
+      "purchase_context_rushed",
+      "risk_scenario_high_risk_behavior",
+      "risk_scenario_impulse_purchase",
+      "risk_scenario_low_risk_purchase",
+      "time_of_day_evening",
+      "time_of_day_morning",
+      "time_of_day_night"
+    ],
+    "numeric_features": [
+      "amount",
+      "risk_score",
+      "payment_credit_limit",
+      "price_comparison_time",
+      "customer_tenure_days"
+    ],
+    "categorical_features": [
+      "device_is_trusted",
+      "installment_count",
+      "week_of_month",
+      "is_weekend",
+      "is_month_end",
+      "is_holiday_season",
+      "is_business_hours",
+      "is_late_night",
+      "customer_credit_score_range_encoded",
+      "customer_age_bracket_encoded",
+      "customer_income_bracket_encoded",
+      "customer_verification_level_encoded",
+      "product_risk_category_encoded",
+      "risk_level_encoded",
+      "device_type_mobile",
+      "device_type_tablet",
+      "payment_provider_afterpay",
+      "payment_provider_klarna",
+      "payment_provider_sezzle",
+      "product_category_clothing",
+      "product_category_electronics",
+      "product_category_home",
+      "product_category_sports",
+      "purchase_context_normal",
+      "purchase_context_rushed",
+      "risk_scenario_high_risk_behavior",
+      "risk_scenario_impulse_purchase",
+      "risk_scenario_low_risk_purchase",
+      "time_of_day_evening",
+      "time_of_day_morning",
+      "time_of_day_night"
+    ],
+    "total_features": 36,
+    "preprocessor": "ColumnTransformer with StandardScaler"
+  },
+  "deployment_strategy": {
+    "mode": "shadow_multi_model",
+    "champion": "ridge",
+    "challengers": [
+      "logistic",
+      "elastic",
+      "ensemble"
+    ],
+    "baseline_discrimination": 2.8,
+    "target_improvement": 2.8
+  },
+  "data_quality_status": {
+    "synthetic_data_source": "Simtom",
+    "known_limitations": "Weak signal strength, limited business viability",
+    "recommended_use": "Infrastructure development and ML ops testing",
+    "production_readiness": "Conditional - awaiting improved synthetic data"
+  },
+  "export_info": {
+    "export_date": "2025-09-26 11:17:43.982544",
+    "notebook_version": "03_model_development.ipynb",
+    "research_branch": "ml-model-dev-bnpl0925"
+  }
+}
