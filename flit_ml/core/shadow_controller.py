@@ -605,26 +605,16 @@ def create_production_storage() -> PredictionStorage:
     Returns:
         Storage implementation appropriate for the environment
     """
-    verbose = os.getenv("ML_STORAGE_VERBOSE", "false").lower() == "true"
-
     # Load .env.redis file in development if it exists
+    from dotenv import load_dotenv
+
     env_redis_path = os.path.join(os.getcwd(), '.env.redis')
     if os.path.exists(env_redis_path):
-        try:
-            with open(env_redis_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and '=' in line and not line.startswith('#'):
-                        key, value = line.split('=', 1)
-                        os.environ[key.strip()] = value.strip()
-            # Update verbose after loading .env.redis
-            verbose = os.getenv("ML_STORAGE_VERBOSE", "false").lower() == "true"
-            if verbose:
-                print(f"📁 Loaded Redis configuration from {env_redis_path}")
-        except Exception as e:
-            print(f"⚠️  Failed to load .env.redis: {e}")
+        load_dotenv(env_redis_path)
 
-    # Check if Redis URL is available (Railway deployment or .env.redis)
+    verbose = os.getenv("ML_STORAGE_VERBOSE", "false").lower() == "true"
+
+    # Check if Redis URL is available (Railway sets this automatically)
     redis_url = os.getenv("REDIS_URL")
 
     if redis_url:
