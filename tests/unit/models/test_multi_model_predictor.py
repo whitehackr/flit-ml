@@ -4,7 +4,8 @@ Test the BNPL multi-model predictor with different deployment modes
 """
 
 import sys
-sys.path.append('.')
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
 from flit_ml.features.bnpl_feature_engineering import BNPLFeatureEngineer
 from flit_ml.models.bnpl.predictor import BNPLPredictor

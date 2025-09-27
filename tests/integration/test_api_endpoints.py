@@ -7,9 +7,10 @@ import sys
 import asyncio
 import json
 import time
+import os
 from datetime import datetime
 
-sys.path.append('.')
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 from fastapi.testclient import TestClient
 from flit_ml.api.main import app

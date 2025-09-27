@@ -49,13 +49,17 @@ Standard commands for this repository:
 
 #### Testing
 ```bash
-# Run all tests
-poetry run pytest
+# Run all tests (organized)
+python run_tests.py
 
-# Test specific components
-poetry run pytest tests/integration/
-poetry run python test_single_transaction.py
-poetry run python test_predictor.py
+# Run specific test categories
+poetry run pytest tests/unit/ -v          # Unit tests only
+poetry run pytest tests/integration/ -v   # Integration tests only
+
+# Run individual test modules
+python tests/unit/features/test_feature_engineering.py
+python tests/unit/models/test_multi_model_predictor.py
+python tests/integration/test_api_endpoints.py
 ```
 
 #### Linting & Type Checking

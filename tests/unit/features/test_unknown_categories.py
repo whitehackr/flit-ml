@@ -4,7 +4,8 @@ Test single transaction feature engineering with unknown categories
 """
 
 import sys
-sys.path.append('.')
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
 
 from flit_ml.features.bnpl_feature_engineering import BNPLFeatureEngineer
 
