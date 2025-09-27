@@ -29,6 +29,14 @@ import numpy as np
 from flit_ml.models.bnpl.predictor import BNPLPredictor
 from flit_ml.features.bnpl_feature_engineering import BNPLFeatureEngineer
 
+# Optional MLflow integration
+try:
+    import mlflow
+    import mlflow.sklearn
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+
 
 class ExperimentStatus(Enum):
     """Experiment lifecycle states."""
@@ -327,7 +335,8 @@ class ShadowController:
                  predictor: Optional[BNPLPredictor] = None,
                  feature_engineer: Optional[BNPLFeatureEngineer] = None,
                  storage: Optional[PredictionStorage] = None,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 enable_mlflow: bool = True):
         """
         Initialize Shadow Mode Controller.
 
@@ -336,15 +345,20 @@ class ShadowController:
             feature_engineer: Feature engineering instance
             storage: Prediction storage implementation
             verbose: Enable verbose logging
+            enable_mlflow: Enable MLflow experiment tracking
         """
         self.predictor = predictor or BNPLPredictor(mode="shadow", verbose=False)
         self.feature_engineer = feature_engineer or BNPLFeatureEngineer(client=None, verbose=False)
         self.storage = storage or InMemoryPredictionStorage()
         self.verbose = verbose
+        self.enable_mlflow = enable_mlflow and MLFLOW_AVAILABLE
 
         # Component managers
         self.experiment_manager = ExperimentManager(verbose=verbose)
         self.decision_manager = DecisionManager()
+
+        # Setup MLflow if available and enabled
+        self._setup_mlflow()
 
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -355,6 +369,8 @@ class ShadowController:
             print(f"   Predictor mode: {self.predictor.mode}")
             print(f"   Models loaded: {list(self.predictor.models.keys())}")
             print(f"   Storage type: {type(self.storage).__name__}")
+            if self.enable_mlflow:
+                print(f"   MLflow tracking: enabled")
 
     def assess_risk_with_logging(self, transaction_data: Dict, log_prediction: bool = True) -> Dict:
         """
@@ -413,11 +429,14 @@ class ShadowController:
 
                 # Async logging (non-blocking) - handle event loop gracefully
                 try:
-                    asyncio.create_task(self._log_prediction_async(prediction_log))
+                    asyncio.create_task(self._log_prediction_async(prediction_log, experiment_info))
                 except RuntimeError:
                     # No event loop running, log synchronously for testing
                     try:
                         self.storage.store_prediction(prediction_log)
+                        # Also try MLflow logging for testing
+                        if self.enable_mlflow:
+                            self._log_to_mlflow(prediction_log, experiment_info)
                     except Exception as e:
                         self.logger.error(f"Sync prediction logging failed: {str(e)}")
 
@@ -464,10 +483,19 @@ class ShadowController:
             self.logger.error(f"Risk assessment failed: {str(e)}")
             raise
 
-    async def _log_prediction_async(self, prediction_log: PredictionLog):
+    async def _log_prediction_async(self, prediction_log: PredictionLog, experiment_info: Optional[Dict] = None):
         """Log prediction asynchronously to avoid blocking API response."""
         try:
+            # Store prediction in Redis/storage
             self.storage.store_prediction(prediction_log)
+
+            # Log to MLflow if enabled and experiment info available
+            if experiment_info and self.enable_mlflow:
+                # Run MLflow logging in a separate thread to avoid blocking
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    executor.submit(self._log_to_mlflow, prediction_log, experiment_info)
+
         except Exception as e:
             self.logger.error(f"Async prediction logging failed: {str(e)}")
             # Could implement retry logic or fallback storage
@@ -582,8 +610,61 @@ class ShadowController:
             "component_versions": {
                 "model_version": self.predictor.model_version,
                 "api_version": "v0.1.0"
-            }
+            },
+            "mlflow_enabled": self.enable_mlflow
         }
+
+    def _setup_mlflow(self):
+        """Setup MLflow tracking for experiment management."""
+        if not self.enable_mlflow:
+            return
+
+        try:
+            # Configure MLflow for production use
+            mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+            mlflow.set_tracking_uri(mlflow_tracking_uri)
+
+            # Set experiment name
+            experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "bnpl_shadow_mode")
+            mlflow.set_experiment(experiment_name)
+
+            if self.verbose:
+                print(f"📊 MLflow configured: {mlflow_tracking_uri}")
+
+        except Exception as e:
+            self.logger.warning(f"MLflow setup failed: {e}")
+            self.enable_mlflow = False
+
+    def _log_to_mlflow(self, prediction_log: PredictionLog, experiment_info: Dict):
+        """Log prediction and experiment data to MLflow."""
+        if not self.enable_mlflow:
+            return
+
+        try:
+            with mlflow.start_run(run_name=f"prediction_{prediction_log.prediction_id[:8]}"):
+                # Log prediction metrics
+                mlflow.log_metric("default_probability", prediction_log.default_probability)
+                mlflow.log_metric("processing_time_ms", prediction_log.processing_time_ms)
+
+                # Log experiment parameters
+                mlflow.log_param("model_selected", prediction_log.selected_model)
+                mlflow.log_param("business_decision", prediction_log.business_decision)
+                mlflow.log_param("risk_level", prediction_log.risk_level)
+                mlflow.log_param("decision_policy", prediction_log.decision_policy)
+                mlflow.log_param("experiment_id", prediction_log.experiment_id or "none")
+                mlflow.log_param("traffic_segment", prediction_log.traffic_segment)
+
+                # Log model predictions as metrics
+                for model_name, prediction in experiment_info["all_predictions"].items():
+                    if isinstance(prediction, (int, float)):
+                        mlflow.log_metric(f"model_{model_name}_prediction", prediction)
+
+                # Log risk thresholds
+                for threshold_name, threshold_value in prediction_log.risk_thresholds.items():
+                    mlflow.log_param(f"threshold_{threshold_name}", threshold_value)
+
+        except Exception as e:
+            self.logger.warning(f"MLflow logging failed: {e}")
 
 
 # Factory Functions for Production Deployment
@@ -671,7 +752,8 @@ def create_production_storage() -> PredictionStorage:
 def create_shadow_controller(
     storage: Optional[PredictionStorage] = None,
     policy: DecisionPolicy = DecisionPolicy.BALANCED,
-    verbose: bool = False
+    verbose: bool = False,
+    enable_mlflow: bool = True
 ) -> ShadowController:
     """
     Create Shadow Controller with production-ready configuration.
@@ -680,6 +762,7 @@ def create_shadow_controller(
         storage: Custom storage implementation (if None, uses create_production_storage())
         policy: Initial decision policy
         verbose: Enable verbose logging
+        enable_mlflow: Enable MLflow experiment tracking
 
     Returns:
         Configured Shadow Controller ready for production use
@@ -691,12 +774,13 @@ def create_shadow_controller(
     feature_engineer = BNPLFeatureEngineer()
     predictor = BNPLPredictor(mode="shadow")
 
-    # Create controller
+    # Create controller with MLflow support
     controller = ShadowController(
         predictor=predictor,
         feature_engineer=feature_engineer,
         storage=storage,
-        verbose=verbose
+        verbose=verbose,
+        enable_mlflow=enable_mlflow
     )
 
     # Set decision policy
@@ -707,5 +791,7 @@ def create_shadow_controller(
         print(f"   Policy: {policy.value}")
         print(f"   Storage: {type(storage).__name__}")
         print(f"   Models: {list(predictor.models.keys())}")
+        if controller.enable_mlflow:
+            print(f"   MLflow: enabled")
 
     return controller
