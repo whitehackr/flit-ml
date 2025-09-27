@@ -14,6 +14,7 @@ from datetime import datetime
 
 from flit_ml.features.bnpl_feature_engineering import BNPLFeatureEngineer
 from flit_ml.models.bnpl.predictor import BNPLPredictor
+from flit_ml.core.shadow_controller import ShadowController, create_shadow_controller, DecisionPolicy
 
 
 # Router for BNPL endpoints
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/v1/bnpl", tags=["BNPL Risk Assessment"])
 # Global instances (initialized once for performance)
 _feature_engineer: Optional[BNPLFeatureEngineer] = None
 _predictor: Optional[BNPLPredictor] = None
+_shadow_controller: Optional[ShadowController] = None
 
 # Logger for API operations
 logger = logging.getLogger(__name__)
@@ -87,26 +89,36 @@ class TransactionInput(BaseModel):
 
 
 class RiskAssessmentResponse(BaseModel):
-    """Response model for risk assessment."""
+    """Response model for risk assessment with Shadow Controller integration."""
 
     # Request context
+    prediction_id: str = Field(..., description="Unique prediction identifier")
     transaction_id: str
     assessment_timestamp: str
 
-    # Model predictions
-    predictions: Dict = Field(..., description="Model predictions by name")
+    # Business decision
+    business_decision: str = Field(..., description="Business decision: approve|deny|manual_review")
+    risk_level: str = Field(..., description="Risk level: LOW|MEDIUM|HIGH")
+    default_probability: float = Field(..., description="Selected model probability [0,1]")
+
+    # Model information
+    selected_model: str = Field(..., description="Model used for this prediction")
+    all_predictions: Dict = Field(..., description="All model predictions")
     champion_model: str = Field(..., description="Current champion model")
 
-    # Risk classification
-    risk_level: str = Field(..., description="Predicted risk level: LOW|MEDIUM|HIGH")
-    default_probability: float = Field(..., description="Probability of default [0,1]")
+    # Experiment information
+    experiment_id: Optional[str] = Field(None, description="Active experiment ID")
+    experiment_name: Optional[str] = Field(None, description="Active experiment name")
+    traffic_segment: Optional[str] = Field(None, description="Traffic segment: champion|challenger")
 
     # Performance metrics
     processing_time_ms: float = Field(..., description="Total processing time")
     model_inference_time_ms: float = Field(..., description="Model inference time")
 
-    # Deployment info
-    deployment_mode: str = Field(..., description="Current deployment mode")
+    # Configuration
+    decision_policy: str = Field(..., description="Decision policy used")
+    risk_thresholds: Dict = Field(..., description="Risk thresholds applied")
+    deployment_mode: str = Field(..., description="Deployment mode")
     model_version: str = Field(..., description="Model version used")
 
 
@@ -138,60 +150,44 @@ async def get_predictor() -> BNPLPredictor:
     return _predictor
 
 
+async def get_shadow_controller() -> ShadowController:
+    """Get Shadow Controller instance (singleton)."""
+    global _shadow_controller
+    if _shadow_controller is None:
+        # Create Shadow Controller with production storage and balanced policy
+        _shadow_controller = create_shadow_controller(
+            storage=None,  # Uses create_production_storage() automatically
+            policy=DecisionPolicy.BALANCED,  # Balanced risk policy for production
+            verbose=True   # Enable verbose logging for production monitoring
+        )
+        logger.info("Shadow Controller initialized with production storage")
+    return _shadow_controller
+
+
 # API Endpoints
 @router.post("/risk-assessment", response_model=RiskAssessmentResponse)
 async def assess_risk(
     transaction: TransactionInput,
-    feature_engineer: BNPLFeatureEngineer = Depends(get_feature_engineer),
-    predictor: BNPLPredictor = Depends(get_predictor)
+    shadow_controller: ShadowController = Depends(get_shadow_controller)
 ) -> RiskAssessmentResponse:
     """
-    Assess default risk for a BNPL transaction.
+    Assess default risk for a BNPL transaction using Shadow Controller.
 
-    Processes the transaction through the complete ML pipeline:
+    Processes transaction through the complete Shadow Mode pipeline:
     1. Feature engineering (JSON → 36 features)
-    2. Multi-model prediction (4 models in shadow mode)
-    3. Risk classification and response formatting
+    2. Multi-model prediction with A/B testing
+    3. Business decision logic with configurable policies
+    4. Async prediction logging to Redis/BigQuery
+    5. Experiment management and performance tracking
 
-    Returns comprehensive risk assessment with model predictions.
+    Returns comprehensive risk assessment with business decision and experiment data.
     """
-    start_time = time.time()
-
     try:
-        # Step 1: Feature Engineering
-        features = feature_engineer.engineer_single_transaction(transaction.dict())
+        # Use Shadow Controller for complete risk assessment
+        response = shadow_controller.assess_risk_with_logging(transaction.dict())
 
-        # Step 2: Multi-Model Prediction
-        predictions = predictor.predict(features)
-
-        # Step 3: Risk Classification
-        # Use champion model prediction for risk level
-        champion_model = predictions.get("champion", "ridge")
-        default_prob = predictions.get(champion_model, predictions.get("prediction", 0.0))
-
-        # Classify risk level based on probability thresholds
-        if default_prob >= 0.7:
-            risk_level = "HIGH"
-        elif default_prob >= 0.4:
-            risk_level = "MEDIUM"
-        else:
-            risk_level = "LOW"
-
-        # Step 4: Format Response
-        processing_time = (time.time() - start_time) * 1000
-
-        return RiskAssessmentResponse(
-            transaction_id=transaction.transaction_id,
-            assessment_timestamp=datetime.utcnow().isoformat() + "Z",
-            predictions=predictions,
-            champion_model=champion_model,
-            risk_level=risk_level,
-            default_probability=default_prob,
-            processing_time_ms=round(processing_time, 2),
-            model_inference_time_ms=predictions.get("inference_time_ms", 0.0),
-            deployment_mode=predictor.mode,
-            model_version=predictor.model_version
-        )
+        # Convert to API response format
+        return RiskAssessmentResponse(**response)
 
     except Exception as e:
         logger.error(f"Risk assessment failed for transaction {transaction.transaction_id}: {str(e)}")
@@ -203,30 +199,31 @@ async def assess_risk(
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(
-    feature_engineer: BNPLFeatureEngineer = Depends(get_feature_engineer),
-    predictor: BNPLPredictor = Depends(get_predictor)
+    shadow_controller: ShadowController = Depends(get_shadow_controller)
 ) -> HealthResponse:
     """
-    Health check endpoint for monitoring.
+    Health check endpoint for monitoring Shadow Controller and all ML components.
 
-    Validates that all ML components are properly loaded and functional.
+    Validates Shadow Controller, storage, experiments, and ML components.
     """
     try:
-        # Check model loading status
-        model_info = predictor.get_model_info()
+        # Get comprehensive controller status
+        controller_info = shadow_controller.get_controller_info()
 
         model_status = {
-            "feature_engineer": "healthy",
-            "predictor": "healthy",
-            "models_loaded": str(model_info["models_loaded"]),
-            "champion": model_info["champion"]
+            "shadow_controller": "healthy",
+            "storage_type": controller_info["storage_type"],
+            "predictor_mode": controller_info["predictor_mode"],
+            "models_loaded": str(controller_info["models_loaded"]),
+            "decision_policy": controller_info["current_policy"],
+            "active_experiment": str(controller_info["active_experiment"])
         }
 
         return HealthResponse(
             status="healthy",
             timestamp=datetime.utcnow().isoformat() + "Z",
             model_status=model_status,
-            version=predictor.model_version
+            version=controller_info["component_versions"]["api_version"]
         )
 
     except Exception as e:
