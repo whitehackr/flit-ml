@@ -1,0 +1,17 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.11.8
+httpx==0.25.2
+pandas==2.3.2
+numpy==1.26.4
+scikit-learn==1.7.2
+xgboost==2.1.4
+lightgbm==4.6.0
+mlflow==2.22.2
+redis==6.4.0
+python-dotenv==1.1.1
+google-cloud-bigquery==3.38.0
+google-cloud-bigquery-storage==2.33.1
+pyarrow==13.0.0
+asyncio-mqtt==0.16.2
+joblib==1.5.2

@@ -16,19 +16,17 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN pip install poetry==1.6.1
+# Poetry configuration (commented out due to Railway build issues)
+# RUN pip install poetry==1.6.1
+# ENV POETRY_NO_INTERACTION=1 \
+#     POETRY_VENV_IN_PROJECT=1 \
+#     POETRY_CACHE_DIR=/tmp/poetry_cache
+# COPY pyproject.toml poetry.lock ./
+# RUN poetry install --only=main && rm -rf $POETRY_CACHE_DIR
 
-# Configure Poetry
-ENV POETRY_NO_INTERACTION=1 \
-    POETRY_VENV_IN_PROJECT=1 \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
-
-# Copy Poetry configuration files
-COPY pyproject.toml poetry.lock ./
-
-# Install dependencies
-RUN poetry install --only=main && rm -rf $POETRY_CACHE_DIR
+# Use requirements.txt for Railway deployment (workaround for Poetry connection issues)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -45,5 +43,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:$PORT/v1/bnpl/health || exit 1
 
-# Start command for Railway deployment
-CMD poetry run uvicorn flit_ml.api.main:app --host 0.0.0.0 --port $PORT
+# Start command for Railway deployment (updated for pip-based install)
+# CMD poetry run uvicorn flit_ml.api.main:app --host 0.0.0.0 --port $PORT
+CMD python -m uvicorn flit_ml.api.main:app --host 0.0.0.0 --port ${PORT:-8000}
