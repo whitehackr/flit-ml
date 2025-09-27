@@ -16,6 +16,7 @@ import time
 import uuid
 import hashlib
 import asyncio
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, Protocol
 from enum import Enum
@@ -583,3 +584,138 @@ class ShadowController:
                 "api_version": "v0.1.0"
             }
         }
+
+
+# Factory Functions for Production Deployment
+
+def create_production_storage() -> PredictionStorage:
+    """
+    Create storage implementation based on environment configuration.
+
+    Environment Variables (Railway deployment):
+        REDIS_URL: Railway-provided Redis connection URL
+        ML_PREDICTION_TTL: TTL for predictions in seconds (default: 2592000 = 30 days)
+        ML_STORAGE_VERBOSE: Enable verbose logging (default: false)
+
+    Development (.env.redis file in project root):
+        REDIS_URL=redis://localhost:6379/0
+        ML_PREDICTION_TTL=2592000
+        ML_STORAGE_VERBOSE=true
+
+    Returns:
+        Storage implementation appropriate for the environment
+    """
+    verbose = os.getenv("ML_STORAGE_VERBOSE", "false").lower() == "true"
+
+    # Load .env.redis file in development if it exists
+    env_redis_path = os.path.join(os.getcwd(), '.env.redis')
+    if os.path.exists(env_redis_path):
+        try:
+            with open(env_redis_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '=' in line and not line.startswith('#'):
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+            # Update verbose after loading .env.redis
+            verbose = os.getenv("ML_STORAGE_VERBOSE", "false").lower() == "true"
+            if verbose:
+                print(f"📁 Loaded Redis configuration from {env_redis_path}")
+        except Exception as e:
+            print(f"⚠️  Failed to load .env.redis: {e}")
+
+    # Check if Redis URL is available (Railway deployment or .env.redis)
+    redis_url = os.getenv("REDIS_URL")
+
+    if redis_url:
+        try:
+            # Import Redis storage (only when needed to avoid dependency issues)
+            from flit_ml.core.redis_storage import RedisPredictionStorage
+            import redis
+
+            prediction_ttl = int(os.getenv("ML_PREDICTION_TTL", "2592000"))
+
+            # Create Redis client with production-optimized settings
+            redis_client = redis.Redis.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_timeout=10,
+                socket_connect_timeout=10,
+                retry_on_timeout=True,
+                health_check_interval=30,
+                max_connections=20
+            )
+
+            storage = RedisPredictionStorage(
+                redis_client=redis_client,
+                prediction_ttl=prediction_ttl,
+                verbose=verbose
+            )
+
+            # Determine environment name for logging
+            env_name = "Production" if not redis_url.startswith("redis://localhost") else "Development"
+            if verbose:
+                # Mask sensitive parts of URL for logging
+                safe_url = redis_url.split('@')[0] + '@***' if '@' in redis_url else redis_url.split('://')[0] + '://***'
+                print(f"🗄️  Using Redis storage for {env_name} environment")
+                print(f"   URL: {safe_url}")
+                print(f"   TTL: {prediction_ttl}s ({prediction_ttl//86400} days)")
+
+            return storage
+
+        except ImportError as e:
+            print(f"⚠️  Redis not available, falling back to in-memory storage: {e}")
+            return InMemoryPredictionStorage()
+        except Exception as e:
+            print(f"⚠️  Redis connection failed, falling back to in-memory storage: {e}")
+            return InMemoryPredictionStorage()
+
+    else:
+        # No Redis available - use in-memory storage
+        if verbose:
+            print(f"🧪 Using in-memory storage")
+            print("   Create .env.redis file in project root with REDIS_URL to enable Redis")
+        return InMemoryPredictionStorage()
+
+
+def create_shadow_controller(
+    storage: Optional[PredictionStorage] = None,
+    policy: DecisionPolicy = DecisionPolicy.BALANCED,
+    verbose: bool = False
+) -> ShadowController:
+    """
+    Create Shadow Controller with production-ready configuration.
+
+    Args:
+        storage: Custom storage implementation (if None, uses create_production_storage())
+        policy: Initial decision policy
+        verbose: Enable verbose logging
+
+    Returns:
+        Configured Shadow Controller ready for production use
+    """
+    if storage is None:
+        storage = create_production_storage()
+
+    # Initialize ML components
+    feature_engineer = BNPLFeatureEngineer()
+    predictor = BNPLPredictor(mode="shadow")
+
+    # Create controller
+    controller = ShadowController(
+        predictor=predictor,
+        feature_engineer=feature_engineer,
+        storage=storage,
+        verbose=verbose
+    )
+
+    # Set decision policy
+    controller.decision_manager.update_policy(policy)
+
+    if verbose:
+        print(f"🎮 Shadow Controller initialized")
+        print(f"   Policy: {policy.value}")
+        print(f"   Storage: {type(storage).__name__}")
+        print(f"   Models: {list(predictor.models.keys())}")
+
+    return controller
