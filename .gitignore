@@ -1,2 +1,12 @@
 __pycache__/
 logs/
+
+# Environment files (contain sensitive credentials)
+.env
+.env.*
+!.env.*.template
+
+# MLflow artifacts (local development only)
+mlflow.db
+mlruns/
+mlflow-artifacts/
