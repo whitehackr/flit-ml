@@ -687,33 +687,57 @@ class BNPLFeatureEngineer:
         # This ensures we always get the same 36 features regardless of input values
 
         # Device type one-hot (drop 'desktop' to match training)
-        df_encoded['device_type_mobile'] = 1 if df_encoded['device_type'].iloc[0] == 'mobile' else 0
-        df_encoded['device_type_tablet'] = 1 if df_encoded['device_type'].iloc[0] == 'tablet' else 0
+        device_type = df_encoded['device_type'].iloc[0]
+        known_device_types = ['desktop', 'mobile', 'tablet']
+        if device_type not in known_device_types:
+            self._log_and_print(f"⚠️  Unknown device_type: {device_type}. Setting all device_type_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['device_type_mobile'] = 1 if device_type == 'mobile' else 0
+        df_encoded['device_type_tablet'] = 1 if device_type == 'tablet' else 0
 
         # Payment provider one-hot (drop 'zip' to match training)
-        df_encoded['payment_provider_afterpay'] = 1 if df_encoded['payment_provider'].iloc[0] == 'afterpay' else 0
-        df_encoded['payment_provider_klarna'] = 1 if df_encoded['payment_provider'].iloc[0] == 'klarna' else 0
-        df_encoded['payment_provider_sezzle'] = 1 if df_encoded['payment_provider'].iloc[0] == 'sezzle' else 0
+        payment_provider = df_encoded['payment_provider'].iloc[0]
+        known_payment_providers = ['afterpay', 'klarna', 'sezzle', 'zip']
+        if payment_provider not in known_payment_providers:
+            self._log_and_print(f"⚠️  Unknown payment_provider: {payment_provider}. Setting all payment_provider_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['payment_provider_afterpay'] = 1 if payment_provider == 'afterpay' else 0
+        df_encoded['payment_provider_klarna'] = 1 if payment_provider == 'klarna' else 0
+        df_encoded['payment_provider_sezzle'] = 1 if payment_provider == 'sezzle' else 0
 
         # Product category one-hot (drop 'beauty' to match training)
-        df_encoded['product_category_clothing'] = 1 if df_encoded['product_category'].iloc[0] == 'clothing' else 0
-        df_encoded['product_category_electronics'] = 1 if df_encoded['product_category'].iloc[0] == 'electronics' else 0
-        df_encoded['product_category_home'] = 1 if df_encoded['product_category'].iloc[0] == 'home' else 0
-        df_encoded['product_category_sports'] = 1 if df_encoded['product_category'].iloc[0] == 'sports' else 0
+        product_category = df_encoded['product_category'].iloc[0]
+        known_product_categories = ['clothing', 'electronics', 'home', 'sports', 'beauty']
+        if product_category not in known_product_categories:
+            self._log_and_print(f"⚠️  Unknown product_category: {product_category}. Setting all product_category_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['product_category_clothing'] = 1 if product_category == 'clothing' else 0
+        df_encoded['product_category_electronics'] = 1 if product_category == 'electronics' else 0
+        df_encoded['product_category_home'] = 1 if product_category == 'home' else 0
+        df_encoded['product_category_sports'] = 1 if product_category == 'sports' else 0
 
         # Purchase context one-hot (drop 'sale' to match training)
-        df_encoded['purchase_context_normal'] = 1 if df_encoded['purchase_context'].iloc[0] == 'normal' else 0
-        df_encoded['purchase_context_rushed'] = 1 if df_encoded['purchase_context'].iloc[0] == 'rushed' else 0
+        purchase_context = df_encoded['purchase_context'].iloc[0]
+        known_purchase_contexts = ['normal', 'rushed', 'sale']
+        if purchase_context not in known_purchase_contexts:
+            self._log_and_print(f"⚠️  Unknown purchase_context: {purchase_context}. Setting all purchase_context_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['purchase_context_normal'] = 1 if purchase_context == 'normal' else 0
+        df_encoded['purchase_context_rushed'] = 1 if purchase_context == 'rushed' else 0
 
         # Risk scenario one-hot (drop 'repeat_customer' to match training)
-        df_encoded['risk_scenario_high_risk_behavior'] = 1 if df_encoded['risk_scenario'].iloc[0] == 'high_risk_behavior' else 0
-        df_encoded['risk_scenario_impulse_purchase'] = 1 if df_encoded['risk_scenario'].iloc[0] == 'impulse_purchase' else 0
-        df_encoded['risk_scenario_low_risk_purchase'] = 1 if df_encoded['risk_scenario'].iloc[0] == 'low_risk_purchase' else 0
+        risk_scenario = df_encoded['risk_scenario'].iloc[0]
+        known_risk_scenarios = ['high_risk_behavior', 'impulse_purchase', 'low_risk_purchase', 'repeat_customer']
+        if risk_scenario not in known_risk_scenarios:
+            self._log_and_print(f"⚠️  Unknown risk_scenario: {risk_scenario}. Setting all risk_scenario_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['risk_scenario_high_risk_behavior'] = 1 if risk_scenario == 'high_risk_behavior' else 0
+        df_encoded['risk_scenario_impulse_purchase'] = 1 if risk_scenario == 'impulse_purchase' else 0
+        df_encoded['risk_scenario_low_risk_purchase'] = 1 if risk_scenario == 'low_risk_purchase' else 0
 
         # Time of day one-hot (drop 'afternoon' to match training)
-        df_encoded['time_of_day_evening'] = 1 if df_encoded['time_of_day'].iloc[0] == 'evening' else 0
-        df_encoded['time_of_day_morning'] = 1 if df_encoded['time_of_day'].iloc[0] == 'morning' else 0
-        df_encoded['time_of_day_night'] = 1 if df_encoded['time_of_day'].iloc[0] == 'night' else 0
+        time_of_day = df_encoded['time_of_day'].iloc[0]
+        known_time_of_day = ['night', 'morning', 'afternoon', 'evening']
+        if time_of_day not in known_time_of_day:
+            self._log_and_print(f"⚠️  Unknown time_of_day: {time_of_day}. Setting all time_of_day_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['time_of_day_evening'] = 1 if time_of_day == 'evening' else 0
+        df_encoded['time_of_day_morning'] = 1 if time_of_day == 'morning' else 0
+        df_encoded['time_of_day_night'] = 1 if time_of_day == 'night' else 0
 
         # Convert boolean features to int
         df_encoded['device_is_trusted'] = df_encoded['device_is_trusted'].astype(int)
