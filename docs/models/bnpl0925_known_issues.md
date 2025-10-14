@@ -9,6 +9,7 @@ The BNPL ML model research phase is **COMPLETE** with known issues documented be
 1. [Feature Importance Anomaly](#1-feature-importance-anomaly) - 🟡 Medium Priority
 2. [Business Performance Gap](#2-business-performance-gap) - 🟡 High Priority
 3. [Feature Engineering Optimization](#3-feature-engineering-optimization) - 🟢 Future Enhancement
+4. [Ensemble Probability Calibration](#4-ensemble-probability-calibration) - 🟡 Medium Priority
 
 ---
 
@@ -76,7 +77,48 @@ critical_features = ['risk_score', 'risk_level_encoded', 'customer_credit_score_
 **Production Deployment:** 🚀 APPROVED
 **Handoff:** Ready for engineering implementation
 
+### 4. Ensemble Probability Calibration
+
+**Status:** 🟡 Production workaround implemented
+**Discovered:** Production inference pipeline development
+**Impact:** Ensemble predictions exclude RidgeClassifier due to uncalibrated probabilities
+
+**Problem:** VotingClassifier ensemble contains mixed estimator types:
+- **LogisticRegression** (L1 & ElasticNet): Has `predict_proba()` with calibrated probabilities
+- **RidgeClassifier**: Only has `decision_function()` with uncalibrated scores
+
+**Current Workaround:**
+```python
+# Only average models with calibrated probability outputs
+# RidgeClassifier excluded from ensemble probability calculation
+ensemble_prediction = np.mean([logistic_prob, elastic_prob])  # Excludes ridge
+```
+
+**Root Cause:** RidgeClassifier decision function outputs are not calibrated probabilities. Converting with sigmoid (`1/(1+exp(-score))`) produces arbitrary probability-like values without proper calibration.
+
+**Proper Solution for Next Training Cycle:**
+```python
+from sklearn.calibration import CalibratedClassifierCV
+
+# Wrap RidgeClassifier with calibration during training
+ridge_calibrated = CalibratedClassifierCV(RidgeClassifier(alpha=1000.0), cv=3)
+ridge_calibrated.fit(X_train, y_train)
+
+# Now ensemble can use all models with proper probabilities
+ensemble = VotingClassifier([
+    ('ridge', ridge_calibrated),    # Now has predict_proba()
+    ('logistic', logistic_model),
+    ('elastic', elastic_model)
+])
+```
+
+**Current Impact:**
+- Ensemble predictions functional but only use 2/3 models
+- Ridge's contribution limited to individual model predictions
+- Acceptable for v0.1.0 deployment, should fix in v0.2.0
+
 **Next Actions:**
 1. Model serialization and deployment (separate PR)
 2. Post-deployment monitoring setup
 3. Issue #1/#2 investigation in optimization sprint
+4. Issue #4 calibration fix in next training cycle

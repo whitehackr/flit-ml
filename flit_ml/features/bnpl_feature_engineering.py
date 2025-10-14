@@ -11,6 +11,8 @@ import numpy as np
 import logging
 from typing import Dict, Tuple, Optional
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
+import joblib
+import os
 from google.cloud import bigquery
 from flit_ml.config import config
 
@@ -547,3 +549,262 @@ class BNPLFeatureEngineer:
         self._log_and_print(f"   Ready for ML model development")
 
         return df_final, feature_metadata
+
+    def engineer_single_transaction(self, transaction_data: dict) -> pd.DataFrame:
+        """
+        Transform single transaction JSON into 36 features expected by production models.
+
+        This method creates the exact same features as the batch processing pipeline,
+        then outputs them in the precise order expected by the fitted preprocessor.
+        The preprocessor will handle final scaling and formatting.
+
+        Args:
+            transaction_data: JSON-like dict from API containing:
+                - amount: float
+                - transaction_timestamp: str (ISO format)
+                - customer_credit_score_range: str ('poor'|'fair'|'good'|'excellent')
+                - customer_age_bracket: str ('18-24'|'25-34'|'35-44'|'45-54'|'55+')
+                - customer_income_bracket: str ('<25k'|'25k-50k'|'50k-75k'|'75k-100k'|'100k+')
+                - customer_verification_level: str ('unverified'|'partial'|'verified')
+                - customer_tenure_days: int
+                - device_type: str ('desktop'|'mobile'|'tablet')
+                - device_is_trusted: bool
+                - product_category: str ('clothing'|'electronics'|'home'|'sports'|'beauty')
+                - product_risk_category: str ('low'|'medium'|'high')
+                - risk_score: float
+                - risk_level: str ('low'|'medium'|'high')
+                - risk_scenario: str ('high_risk_behavior'|'impulse_purchase'|'low_risk_purchase'|'repeat_customer')
+                - payment_provider: str ('afterpay'|'klarna'|'sezzle'|'zip')
+                - installment_count: int
+                - payment_credit_limit: float
+                - price_comparison_time: float
+                - purchase_context: str ('normal'|'rushed'|'sale')
+
+        Returns:
+            DataFrame with 1 row and 36 features in exact order expected by
+            the fitted preprocessor (bnpl_preprocessor_v0.1.0.joblib)
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+        """
+        import time
+        start_time = time.time()
+
+        if self.verbose:
+            self._log_and_print("🔄 Processing single transaction for production inference...")
+
+        # Validate required fields
+        required_fields = [
+            'amount', 'transaction_timestamp', 'customer_credit_score_range',
+            'customer_age_bracket', 'customer_income_bracket', 'customer_verification_level',
+            'customer_tenure_days', 'device_type', 'device_is_trusted', 'product_category',
+            'product_risk_category', 'risk_score', 'risk_level', 'risk_scenario',
+            'payment_provider', 'installment_count', 'payment_credit_limit',
+            'price_comparison_time', 'purchase_context'
+        ]
+
+        missing_fields = [field for field in required_fields if field not in transaction_data]
+        if missing_fields:
+            raise ValueError(f"Missing required fields: {missing_fields}")
+
+        # Convert to single-row DataFrame for processing
+        df = pd.DataFrame([transaction_data])
+
+        # Apply same feature engineering pipeline as batch method
+        df = self._extract_temporal_features_single(df)
+        df = self._encode_categorical_features_single(df)
+        df = self._clean_and_select_features_single(df)
+        df = self._ensure_production_feature_order(df)
+
+        processing_time = (time.time() - start_time) * 1000
+
+        if self.verbose:
+            self._log_and_print(f"✅ Single transaction processed in {processing_time:.1f}ms")
+            self._log_and_print(f"   Output shape: {df.shape} (expected: 1 row × 36 features)")
+
+        # Validate output matches expectation
+        if df.shape != (1, 36):
+            raise ValueError(f"Expected (1, 36), got {df.shape}. Features: {list(df.columns)}")
+
+        return df
+
+    def _extract_temporal_features_single(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Extract temporal features for single transaction (optimized version)."""
+        df = df.copy()
+
+        # Ensure transaction_timestamp is datetime
+        df['transaction_timestamp'] = pd.to_datetime(df['transaction_timestamp'])
+
+        # Extract basic temporal components
+        df['transaction_hour'] = df['transaction_timestamp'].dt.hour
+        df['transaction_day_of_week'] = df['transaction_timestamp'].dt.dayofweek
+        df['transaction_month'] = df['transaction_timestamp'].dt.month
+        df['transaction_day_of_month'] = df['transaction_timestamp'].dt.day
+
+        # Week of month calculation
+        df['week_of_month'] = ((df['transaction_day_of_month'] - 1) // 7) + 1
+
+        # Create categorical temporal features
+        df['is_weekend'] = df['transaction_day_of_week'].isin([5, 6]).astype(int)
+        df['is_month_end'] = (df['transaction_day_of_month'] >= 25).astype(int)
+        df['is_holiday_season'] = df['transaction_month'].isin([11, 12]).astype(int)
+        df['is_business_hours'] = df['transaction_hour'].between(9, 17).astype(int)
+        df['is_late_night'] = df['transaction_hour'].isin([22, 23, 0, 1, 2, 3, 4, 5]).astype(int)
+
+        # Time of day categories
+        df['time_of_day'] = pd.cut(
+            df['transaction_hour'],
+            bins=[-1, 6, 12, 18, 24],
+            labels=['night', 'morning', 'afternoon', 'evening']
+        )
+
+        return df
+
+    def _encode_categorical_features_single(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Encode categorical features for single transaction with consistent one-hot columns."""
+        df_encoded = df.copy()
+
+        # Ordinal encodings (same mappings as batch method)
+        ordinal_mappings = {
+            'customer_credit_score_range': ['poor', 'fair', 'good', 'excellent'],
+            'customer_age_bracket': ['18-24', '25-34', '35-44', '45-54', '55+'],
+            'customer_income_bracket': ['<25k', '25k-50k', '50k-75k', '75k-100k', '100k+'],
+            'customer_verification_level': ['unverified', 'partial', 'verified'],
+            'product_risk_category': ['low', 'medium', 'high'],
+            'risk_level': ['low', 'medium', 'high']
+        }
+
+        # Apply ordinal encoding
+        for feature, categories in ordinal_mappings.items():
+            if feature in df_encoded.columns:
+                value = df_encoded[feature].iloc[0]
+                if value in categories:
+                    df_encoded[f"{feature}_encoded"] = categories.index(value)
+                else:
+                    df_encoded[f"{feature}_encoded"] = -1  # Unknown value
+
+        # One-hot encodings - manually create all expected columns for consistency
+        # This ensures we always get the same 36 features regardless of input values
+
+        # Device type one-hot (drop 'desktop' to match training)
+        device_type = df_encoded['device_type'].iloc[0]
+        known_device_types = ['desktop', 'mobile', 'tablet']
+        if device_type not in known_device_types:
+            self._log_and_print(f"⚠️  Unknown device_type: {device_type}. Setting all device_type_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['device_type_mobile'] = 1 if device_type == 'mobile' else 0
+        df_encoded['device_type_tablet'] = 1 if device_type == 'tablet' else 0
+
+        # Payment provider one-hot (drop 'zip' to match training)
+        payment_provider = df_encoded['payment_provider'].iloc[0]
+        known_payment_providers = ['afterpay', 'klarna', 'sezzle', 'zip']
+        if payment_provider not in known_payment_providers:
+            self._log_and_print(f"⚠️  Unknown payment_provider: {payment_provider}. Setting all payment_provider_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['payment_provider_afterpay'] = 1 if payment_provider == 'afterpay' else 0
+        df_encoded['payment_provider_klarna'] = 1 if payment_provider == 'klarna' else 0
+        df_encoded['payment_provider_sezzle'] = 1 if payment_provider == 'sezzle' else 0
+
+        # Product category one-hot (drop 'beauty' to match training)
+        product_category = df_encoded['product_category'].iloc[0]
+        known_product_categories = ['clothing', 'electronics', 'home', 'sports', 'beauty']
+        if product_category not in known_product_categories:
+            self._log_and_print(f"⚠️  Unknown product_category: {product_category}. Setting all product_category_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['product_category_clothing'] = 1 if product_category == 'clothing' else 0
+        df_encoded['product_category_electronics'] = 1 if product_category == 'electronics' else 0
+        df_encoded['product_category_home'] = 1 if product_category == 'home' else 0
+        df_encoded['product_category_sports'] = 1 if product_category == 'sports' else 0
+
+        # Purchase context one-hot (drop 'sale' to match training)
+        purchase_context = df_encoded['purchase_context'].iloc[0]
+        known_purchase_contexts = ['normal', 'rushed', 'sale']
+        if purchase_context not in known_purchase_contexts:
+            self._log_and_print(f"⚠️  Unknown purchase_context: {purchase_context}. Setting all purchase_context_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['purchase_context_normal'] = 1 if purchase_context == 'normal' else 0
+        df_encoded['purchase_context_rushed'] = 1 if purchase_context == 'rushed' else 0
+
+        # Risk scenario one-hot (drop 'repeat_customer' to match training)
+        risk_scenario = df_encoded['risk_scenario'].iloc[0]
+        known_risk_scenarios = ['high_risk_behavior', 'impulse_purchase', 'low_risk_purchase', 'repeat_customer']
+        if risk_scenario not in known_risk_scenarios:
+            self._log_and_print(f"⚠️  Unknown risk_scenario: {risk_scenario}. Setting all risk_scenario_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['risk_scenario_high_risk_behavior'] = 1 if risk_scenario == 'high_risk_behavior' else 0
+        df_encoded['risk_scenario_impulse_purchase'] = 1 if risk_scenario == 'impulse_purchase' else 0
+        df_encoded['risk_scenario_low_risk_purchase'] = 1 if risk_scenario == 'low_risk_purchase' else 0
+
+        # Time of day one-hot (drop 'afternoon' to match training)
+        time_of_day = df_encoded['time_of_day'].iloc[0]
+        known_time_of_day = ['night', 'morning', 'afternoon', 'evening']
+        if time_of_day not in known_time_of_day:
+            self._log_and_print(f"⚠️  Unknown time_of_day: {time_of_day}. Setting all time_of_day_* features to 0. Consider model retraining if frequency > 5%", logging.WARNING)
+        df_encoded['time_of_day_evening'] = 1 if time_of_day == 'evening' else 0
+        df_encoded['time_of_day_morning'] = 1 if time_of_day == 'morning' else 0
+        df_encoded['time_of_day_night'] = 1 if time_of_day == 'night' else 0
+
+        # Convert boolean features to int
+        df_encoded['device_is_trusted'] = df_encoded['device_is_trusted'].astype(int)
+
+        return df_encoded
+
+    def _clean_and_select_features_single(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and select features for single transaction."""
+        df_clean = df.copy()
+
+        # Remove original categorical and temporal features (same logic as batch)
+        features_to_drop = [
+            # Original categorical features (now encoded)
+            'customer_credit_score_range', 'customer_age_bracket', 'customer_income_bracket',
+            'customer_verification_level', 'product_risk_category', 'risk_level',
+            'device_type', 'payment_provider', 'product_category', 'purchase_context',
+            'risk_scenario', 'time_of_day',
+
+            # Identifiers and raw temporal
+            'customer_id', 'transaction_id', 'transaction_timestamp',
+            'transaction_hour', 'transaction_day_of_week', 'transaction_month',
+            'transaction_day_of_month'
+        ]
+
+        # Remove features that exist
+        existing_features_to_drop = [f for f in features_to_drop if f in df_clean.columns]
+        df_clean = df_clean.drop(columns=existing_features_to_drop)
+
+        # Handle missing values
+        for col in df_clean.columns:
+            if df_clean[col].isnull().any():
+                if df_clean[col].dtype in ['float64', 'int64']:
+                    df_clean[col].fillna(0, inplace=True)
+                else:
+                    df_clean[col].fillna('unknown', inplace=True)
+
+        # Convert string numeric fields
+        if 'price_comparison_time' in df_clean.columns and df_clean['price_comparison_time'].dtype == 'object':
+            df_clean['price_comparison_time'] = pd.to_numeric(df_clean['price_comparison_time'], errors='coerce').fillna(0)
+
+        return df_clean
+
+    def _ensure_production_feature_order(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure features are in exact order expected by production models."""
+        # Expected features in exact order (from metadata)
+        expected_features = [
+            "amount", "customer_tenure_days", "device_is_trusted", "risk_score",
+            "installment_count", "payment_credit_limit", "price_comparison_time",
+            "week_of_month", "is_weekend", "is_month_end", "is_holiday_season",
+            "is_business_hours", "is_late_night", "customer_credit_score_range_encoded",
+            "customer_age_bracket_encoded", "customer_income_bracket_encoded",
+            "customer_verification_level_encoded", "product_risk_category_encoded",
+            "risk_level_encoded", "device_type_mobile", "device_type_tablet",
+            "payment_provider_afterpay", "payment_provider_klarna", "payment_provider_sezzle",
+            "product_category_clothing", "product_category_electronics", "product_category_home",
+            "product_category_sports", "purchase_context_normal", "purchase_context_rushed",
+            "risk_scenario_high_risk_behavior", "risk_scenario_impulse_purchase",
+            "risk_scenario_low_risk_purchase", "time_of_day_evening", "time_of_day_morning",
+            "time_of_day_night"
+        ]
+
+        # Add missing features as zeros
+        for feature in expected_features:
+            if feature not in df.columns:
+                df[feature] = 0
+
+        # Reorder columns to match expected order
+        df = df[expected_features]
+
+        return df
